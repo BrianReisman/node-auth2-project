@@ -1,23 +1,53 @@
 const router = require("express").Router();
-const { checkUsernameExists, validateRoleName } = require('./auth-middleware');
-const { JWT_SECRET } = require("../secrets"); // use this secret!
+const { checkUsernameExists, validateRoleName } = require("./auth-middleware");
+const JWT_SECRET = require("../secrets");
+const Users = require("../users/users-model");
+const bcrytp = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { permittedCrossDomainPolicies } = require("helmet");
 
-router.post("/register", validateRoleName, (req, res, next) => {
-  /**
-    [POST] /api/auth/register { "username": "anna", "password": "1234", "role_name": "angel" }
+router.post("/register", validateRoleName, async (req, res, next) => {
+  const credentials = req.body;
+  try {
+    const hash = bcrytp.hashSync(credentials.password, 10);
+    credentials.password = hash;
 
-    response:
-    status 201
-    {
-      "user"_id: 3,
-      "username": "anna",
-      "role_name": "angel"
-    }
-   */
+    Users.add(credentials)
+      .then((user) => {
+        // const token = generateToken(user)
+        res.status(201).json(user);
+      })
+      .catch((err) => {
+        console.log(err);
+        res.status(400).json({
+          message: "unable to add user, try unique information",
+          ...err,
+        });
+      });
+  } catch (error) {
+    res.status(500).json({
+      message: "server side issue",
+      ...error,
+    });
+  }
 });
 
+router.post("/login", checkUsernameExists, async (req, res, next) => {
+  const { username, password } = req.body;
+  Users.findBy({ username }).then(([user]) => {
+    if (user && bcrytp.compareSync(password, user.password)) {
+      const token = generateToken(user);
+      res.status(200).json({ message: "welcome to the api", token });
+    } else {
+      res.status(400).json({ message: "invalid password" });
+    }
+  });
 
-router.post("/login", checkUsernameExists, (req, res, next) => {
+  //   res.status(500).json({
+  //     message: "server side issue",
+  //     ...err,
+  //   });
+
   /**
     [POST] /api/auth/login { "username": "sue", "password": "1234" }
 
@@ -38,5 +68,20 @@ router.post("/login", checkUsernameExists, (req, res, next) => {
     }
    */
 });
+
+function generateToken(user) {
+  const payload = {
+    subject: user.id,
+    username: user.username,
+    rolename: user.rolename,
+  };
+  const options = {
+    expiresIn: "1h",
+  };
+
+  const token = jwt.sign(payload, JWT_SECRET.jwtSecret, options);
+
+  return token;
+}
 
 module.exports = router;
